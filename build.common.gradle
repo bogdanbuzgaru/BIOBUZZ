@@ -17,9 +17,11 @@
 
 import java.util.regex.Pattern
 
+apply plugin: 'com.android.application'
+
 android {
 
-    compileSdkVersion 30
+    compileSdk 34
 
     signingConfigs {
         release {
@@ -51,7 +53,7 @@ android {
         minSdkVersion 24
         //noinspection ExpiredTargetSdkVersion
         targetSdkVersion 28
-
+        multiDexEnabled true
         /**
          * We keep the versionCode and versionName of robot controller applications in sync with
          * the master information published in the AndroidManifest.xml file of the FtcRobotController
@@ -100,14 +102,14 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     packagingOptions {
         pickFirst '**/*.so'
     }
-    ndkVersion '21.3.6528147'
+    ndkVersion '29.0.14206865'
 }
 
 repositories {
