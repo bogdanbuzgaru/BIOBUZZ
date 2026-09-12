@@ -27,7 +27,7 @@ package org.firstinspires.ftc.robotcontroller.external.utilities;
 */
 
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
-import com.qualcomm.robotcore.eventloop.opmode.Utility;
+//import com.qualcomm.robotcore.eventloop.opmode.Utility;
 import com.qualcomm.robotcore.hardware.AnalogSensor;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.ColorSensor;
@@ -53,7 +53,6 @@ import java.util.Set;
  * WARNING: This only allows activations of a single actuator at a time so if you have two tied
  * together, you need to make sure that can't cause damage to your robot.
  */
-@Utility(name = "Test Hardware", description = "Test hardware devices in your robot configuration")
 @SuppressWarnings("unused")
 public class UtilityTestHardware extends OpMode {
     protected static class Device {
