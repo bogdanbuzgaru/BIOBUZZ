@@ -1,7 +1,6 @@
-package org.firstinspires.ftc.teamcode.IntakeIndex;
+package org.firstinspires.ftc.teamcode.Subsystems;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.HardwareDevice;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 public class IntakeIndex {
@@ -18,7 +17,7 @@ public class IntakeIndex {
 
     public void activateDeactivate(float rightTrigger)
     {
-        if (rightTrigger > 0.1)
+        if (rightTrigger > 0.2)
         {
             intakeMotor.setPower(rightTrigger);
             indexMotor.setPower(rightTrigger);

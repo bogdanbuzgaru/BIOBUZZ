@@ -12,6 +12,7 @@ public class MotorTest extends OpMode {
 
     public void init (){
         slides = hardwareMap.get(DcMotorEx.class, "slides");
+        slides.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
         slides.setTargetPosition(0);
         slides.setMode(DcMotorEx.RunMode.RUN_TO_POSITION);
     }
@@ -20,8 +21,13 @@ public class MotorTest extends OpMode {
             position += 100;
         }else if (gamepad1.dpadDownWasPressed()){
             position -= 100;
+        }else if (gamepad1.dpadLeftWasPressed()){
+            position -= 10;
+        }else if (gamepad1.dpadRightWasPressed()){
+            position += 10;
         }
         slides.setTargetPosition(position);
+        slides.setPower(1);
         telemetry.addData("Position", position);
     }
 }
