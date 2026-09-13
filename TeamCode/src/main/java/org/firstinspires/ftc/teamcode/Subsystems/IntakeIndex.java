@@ -14,7 +14,10 @@ public class IntakeIndex {
         intakeMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         indexMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
     }
-
+    public void auto(){
+        intakeMotor.setPower(1);
+        indexMotor.setPower(1);
+    }
     public void activateDeactivate(float rightTrigger)
     {
         if (rightTrigger > 0.2)

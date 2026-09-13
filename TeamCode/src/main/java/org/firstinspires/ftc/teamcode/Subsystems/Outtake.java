@@ -10,7 +10,7 @@ import com.qualcomm.robotcore.hardware.Servo;
 public class Outtake {
     private DcMotorEx slides;
     private DcMotorEx flywheel;
-    private Servo hood, box;
+    private Servo hood, box, barrier;
     private boolean isOuttake = false;
     private int position = 550;
     private int ticksPerSec = 1300;
@@ -19,11 +19,21 @@ public class Outtake {
         flywheel = hardwareMap.get(DcMotorEx.class, "flywheel");
         hood = hardwareMap.get(Servo.class, "hood");
         box = hardwareMap.get(Servo.class, "box");
+        barrier = hardwareMap.get(Servo.class, "barrier");
         slides.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
         slides.setMode(DcMotorEx.RunMode.RUN_TO_POSITION);
         slides.setTargetPosition(0);
         flywheel.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         flywheel.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(330,0,0,12.41));
+    }
+    public void autoUpdate(boolean shoot){
+        if(shoot){
+            barrier.setPosition(0.5);       //TODO CHANGE POS
+            box.setPosition(0.8);
+        }else{
+            barrier.setPosition(0.9);       //TODO CHANGE POS
+            box.setPosition(0.1);
+        }
     }
     public void update(Gamepad gamepad){
         //550
