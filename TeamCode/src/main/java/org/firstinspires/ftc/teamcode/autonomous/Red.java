@@ -1,7 +1,5 @@
 package org.firstinspires.ftc.teamcode.autonomous;
 
-import static org.firstinspires.ftc.teamcode.pedropathing.Tuning.follower;
-
 import com.pedropathing.follower.Follower;
 import com.pedropathing.geometry.BezierCurve;
 import com.pedropathing.geometry.BezierLine;
@@ -12,14 +10,13 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.ReadWriteFile;
 
-import org.firstinspires.ftc.robotcore.external.State;
 import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
+import org.firstinspires.ftc.teamcode.Subsystems.IntakeIndex;
 import org.firstinspires.ftc.teamcode.Subsystems.Outtake;
 import org.firstinspires.ftc.teamcode.pedropathing.Constants;
 import org.firstinspires.ftc.teamcode.statemachine.Statemachine;
 
 import java.io.File;
-import java.nio.file.Paths;
 
 @Autonomous
 public class Red extends OpMode {
@@ -35,14 +32,16 @@ public class Red extends OpMode {
     private ElapsedTime pathTimer = new ElapsedTime();
     private Statemachine<AutoState> fsm = new Statemachine<AutoState>(AutoState.SHOOT_FIRST);
     private Outtake outtake;
+    private IntakeIndex intakeIndex;
     public void init (){
         follower = Constants.createFollower(hardwareMap);
         follower.setStartingPose(new Pose(55.52, 9.3, Math.toRadians(-90)));
         paths = new Paths(follower);
         outtake = new Outtake(hardwareMap);
+        intakeIndex = new IntakeIndex(hardwareMap);
+        setUp();
     }
     public void start(){
-        setUp();
         fsm.init();
     }
     public void stop(){
@@ -75,34 +74,49 @@ public class Red extends OpMode {
     private void setUp(){
         fsm.onStateEnter(AutoState.SHOOT_FIRST, () -> {
             follower.followPath(paths.SHOOT_FIRST);
+            outtake.autoUpdate(false);
             return null;
         });
         fsm.onStateUpdate(AutoState.SHOOT_FIRST, () -> {
 
             if(!follower.isBusy()){
-                return AutoState.TAKE_BALLS;
+                return handleShoot(AutoState.TAKE_BALLS, 1200);
             }
             return null;
         });
         fsm.onStateEnter(AutoState.TAKE_BALLS, () -> {
             follower.followPath(paths.TAKE_BALLS);
+            outtake.autoUpdate(false);
+            return null;
         });
         fsm.onStateUpdate(AutoState.TAKE_BALLS, () -> {
-
+            intakeIndex.auto();
+            if(!follower.isBusy()){
+                return AutoState.GO_SHOOT;
+            }
+            return null;
         });
         fsm.onStateEnter(AutoState.GO_SHOOT, () -> {
             follower.followPath(paths.GO_SHOOT);
-
+            outtake.autoUpdate(false);
+            return null;
         });
         fsm.onStateUpdate(AutoState.GO_SHOOT, () -> {
-
+            if(!follower.isBusy()){
+                return handleShoot(AutoState.PARK, 1200);
+            }
+            return null;
         });
         fsm.onStateEnter(AutoState.PARK, () -> {
             follower.followPath(paths.PARK);
-
+            outtake.autoUpdate(false);
+            return null;
         });
         fsm.onStateUpdate(AutoState.PARK, () -> {
-
+            if(!follower.isBusy()){
+                requestOpModeStop();
+            }
+            return null;
         });
     }
     public static class Paths {
@@ -143,7 +157,7 @@ public class Red extends OpMode {
                                     new Pose(20.15709459459459, 28.800675675675674),
                                     new Pose(16, 102)
                             )
-                    ).setLinearHeadingInterpolation(Math.toRadians(180), Math.toRadians(-90))
+                    ).setLinearHeadingInterpolation(Math.toRadians(-90), Math.toRadians(-90))
                     .build()
             );
 

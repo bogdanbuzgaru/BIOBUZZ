@@ -34,6 +34,7 @@ public class Outtake {
             barrier.setPosition(0.9);       //TODO CHANGE POS
             box.setPosition(0.1);
         }
+        flywheel.setVelocity(1300);
     }
     public void update(Gamepad gamepad){
         //550
