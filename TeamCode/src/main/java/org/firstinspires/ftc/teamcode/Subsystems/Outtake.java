@@ -54,6 +54,11 @@ public class Outtake {
                 hood.setPosition(0.2);
             }
         }
+        if (gamepad.dpadLeftWasPressed()){
+            barrier.setPosition(0.7);       //TODO CHANGE POS
+        }else if (gamepad.dpadRightWasPressed()){
+            barrier.setPosition(0.3);       //TODO CHANGE POS
+        }
         flywheel.setVelocity(ticksPerSec);
     }
 

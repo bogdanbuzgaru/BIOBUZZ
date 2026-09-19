@@ -7,6 +7,8 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.util.ReadWriteFile;
 
 import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
+import org.firstinspires.ftc.teamcode.Subsystems.IntakeIndex;
+import org.firstinspires.ftc.teamcode.Subsystems.Outtake;
 import org.firstinspires.ftc.teamcode.pedropathing.Constants;
 
 import java.io.File;
@@ -16,7 +18,8 @@ import java.util.List;
 @com.qualcomm.robotcore.eventloop.opmode.TeleOp
 public class TeleOp extends OpMode {
     private final List<Double> results = new ArrayList<>();
-
+    private Outtake outtake;
+    private IntakeIndex intake;
     public void init(){
         File file = AppUtil.getInstance().getSettingsFile("FinalPos.txt");
         try {
@@ -34,8 +37,12 @@ public class TeleOp extends OpMode {
         follower = Constants.createFollower(hardwareMap);
         follower.setStartingPose(startPose);
         follower.setPose(startPose);
+        outtake = new Outtake(hardwareMap);
+        intake = new IntakeIndex(hardwareMap);
     }
     public void loop (){
         follower.update();
+        outtake.update(gamepad1);
+        intake.activateDeactivate(gamepad1.right_trigger);
     }
 }
