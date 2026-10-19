@@ -25,10 +25,22 @@ absolute 3-pin lead is left unplugged — the hub cannot decode it.
 ## Order of operations
 
 1. Run `Swerve Calibration` on blocks. Settle the three boolean arrays at the
-   top of `SwerveTeleOp`: DRIVE_INVERTED, STEER_INVERTED, AZIMUTH_INVERTED.
+   top of `SwerveConstants`: DRIVE_INVERTED, STEER_INVERTED, AZIMUTH_INVERTED.
    Check AZIMUTH_INVERTED on blocks — a wrong sign makes a module run away.
-2. Set LOGO_DIR and USB_DIR to match how the Control Hub is mounted.
+2. Set LOGO_DIR and USB_DIR in `SwerveConstants` to match how the Control Hub
+   is mounted.
 3. Run `Swerve TeleOp`. Align wheels forward in init, press A, then PLAY.
+
+## Where the swerve drive is used
+
+All hardware setup is in `SwerveRobot`. Three things build one:
+
+- `Swerve TeleOp` (this package): drive only, for bring-up and tuning.
+- `TeleOp` (`opmodes/teleop`): competition TeleOp, swerve plus intake/outtake.
+  Align the wheels in init and press A; the drive stays off until you do.
+- Pedro Pathing (`pedropathing/Constants.createFollower`): the autos and the
+  Pedro tuning OpModes, through `PedroSwerveDrivetrain`. These home the wheels
+  at INIT, so align them forward BEFORE pressing INIT.
 
 ## Tuning order
 

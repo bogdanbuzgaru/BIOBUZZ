@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.swerve;
 
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
+
 /**
  * Every number here is a starting point. Measure the geometry ones, tune the
  * gain ones.
@@ -11,6 +13,28 @@ public final class SwerveConstants {
 
     private SwerveConstants() {
     }
+
+    // ------------------------------------------------------------------
+    // bring-up values: find these on the robot with SwerveCalibration
+    // ------------------------------------------------------------------
+
+    /** Module order used by every array in the swerve package. */
+    public static final String[] MODULE_NAMES = {"fl", "fr", "bl", "br"};
+
+    /** True if a positive drive power moves that corner BACKWARD. */
+    public static final boolean[] DRIVE_INVERTED = {false, false, false, false};
+
+    /** True if a positive steer power rotates the module CLOCKWISE. */
+    public static final boolean[] STEER_INVERTED = {false, false, false, false};
+
+    /** True if rotating a module counter-clockwise makes its tick count FALL. */
+    public static final boolean[] AZIMUTH_INVERTED = {false, false, false, false};
+
+    /** Match these to how the Control Hub is physically mounted. */
+    public static final RevHubOrientationOnRobot.LogoFacingDirection LOGO_DIR =
+            RevHubOrientationOnRobot.LogoFacingDirection.UP;
+    public static final RevHubOrientationOnRobot.UsbFacingDirection USB_DIR =
+            RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
 
     // ------------------------------------------------------------------
     // motors

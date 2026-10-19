@@ -53,6 +53,7 @@ public class Outtake {
                 ticksPerSec = 1300;
                 hood.setPosition(0.2);
             }
+            isOuttake = !isOuttake;
         }
         if (gamepad.dpadLeftWasPressed()){
             barrier.setPosition(0.7);       //TODO CHANGE POS

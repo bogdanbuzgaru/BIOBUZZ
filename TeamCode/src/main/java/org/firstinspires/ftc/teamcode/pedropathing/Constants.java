@@ -4,14 +4,13 @@ package org.firstinspires.ftc.teamcode.pedropathing;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.follower.FollowerConstants;
 import com.pedropathing.ftc.FollowerBuilder;
-import com.pedropathing.ftc.drivetrains.MecanumConstants;
 import com.pedropathing.ftc.localization.constants.PinpointConstants;
 import com.pedropathing.paths.PathConstraints;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.teamcode.swerve.SwerveRobot;
 
 public class Constants {
     public static FollowerConstants followerConstants = new FollowerConstants()
@@ -80,24 +79,20 @@ public class Constants {
             .encoderResolution(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD)
             .forwardEncoderDirection(GoBildaPinpointDriver.EncoderDirection.FORWARD)
             .strafeEncoderDirection(GoBildaPinpointDriver.EncoderDirection.REVERSED);
-    public static MecanumConstants driveConstants = new MecanumConstants()
-            .maxPower(1)
-            .rightFrontMotorName("frontRight")
-            .rightRearMotorName("backRight")
-            .leftRearMotorName("backLeft")
-            .leftFrontMotorName("frontLeft")
-            .leftFrontMotorDirection(DcMotorSimple.Direction.REVERSE)
-            .leftRearMotorDirection(DcMotorSimple.Direction.REVERSE)
-            .rightFrontMotorDirection(DcMotorSimple.Direction.FORWARD)
-            .rightRearMotorDirection(DcMotorSimple.Direction.FORWARD)
-//            .xVelocity(71.1380620040293)
-//            .yVelocity(55.06179401067298)
-            ;
+    /**
+     * Builds the follower on the swerve drive.
+     *
+     * Align every wheel straight forward (or to its reference, see
+     * SwerveConstants.AZIMUTH_OFFSET_DEG) BEFORE pressing INIT: the azimuth
+     * encoders are zeroed here, so wherever the wheels sit now becomes forward.
+     */
     public static Follower createFollower(HardwareMap hardwareMap) {
+        SwerveRobot robot = new SwerveRobot(hardwareMap);
+        robot.home();
         return new FollowerBuilder(followerConstants, hardwareMap)
                 .pathConstraints(pathConstraints)
                 .pinpointLocalizer(localizerConstants)
-                .mecanumDrivetrain(driveConstants)
+                .setDrivetrain(new PedroSwerveDrivetrain(hardwareMap, robot))
                 .build();
     }
 
