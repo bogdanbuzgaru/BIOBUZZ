@@ -1,4 +1,5 @@
 package org.firstinspires.ftc.teamcode.swerve;
+
 /**
  * Limits how fast a scalar command can change, in units per second.
  *

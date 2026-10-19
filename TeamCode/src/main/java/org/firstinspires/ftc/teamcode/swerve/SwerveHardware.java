@@ -58,15 +58,15 @@ public final class SwerveHardware {
     // adapters
     // ------------------------------------------------------------------
 
-//    /**
-//     * Converts drive encoder ticks-per-second into metres per second.
-//     *
-//     * @param ticksPerSecond raw encoder velocity (FTC: DcMotorEx.getVelocity())
-//     * @param ticksPerRev    encoder counts per revolution of the motor output shaft
-//     * @param gearRatio      extra reduction between motor output shaft and wheel
-//     *                       (motor revs per wheel rev; 1.0 if direct)
-//     * @param wheelCircumferenceMeters  pi * wheel diameter
-//     */
+    /**
+     * Converts drive encoder ticks-per-second into metres per second.
+     *
+     * @param ticksPerSecond raw encoder velocity (FTC: DcMotorEx.getVelocity())
+     * @param ticksPerRev    encoder counts per revolution of the motor output shaft
+     * @param gearRatio      extra reduction between motor output shaft and wheel
+     *                       (motor revs per wheel rev; 1.0 if direct)
+     * @param wheelCircumferenceMeters  pi * wheel diameter
+     */
     public static class EncoderVelocitySensor implements VelocitySensor {
         private final DoubleSource ticksPerSecond;
         private final double metersPerTick;
@@ -132,7 +132,7 @@ public final class SwerveHardware {
      * This is what you want on a heavy robot: no boot alignment ritual, and the
      * module cannot lose its place after a hard hit.
      *
-//     * @param offsetRadians the reading you see when the wheel points straight ahead,
+     * @param offsetRadians the reading you see when the wheel points straight ahead,
      *                      measured once and hard-coded per module
      */
     public static class AnalogAbsoluteAngleSensor implements AngleSensor {

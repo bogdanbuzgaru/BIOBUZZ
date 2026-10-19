@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.pid;
+package org.firstinspires.ftc.teamcode.legacy;
 public class PIDFLinear extends PIDF {
 
     private double ka, kb, k0;

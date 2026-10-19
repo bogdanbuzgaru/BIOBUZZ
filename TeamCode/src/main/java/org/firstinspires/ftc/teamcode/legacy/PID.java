@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.pid;
+package org.firstinspires.ftc.teamcode.legacy;
 
 public class PID {
     protected double kp, ki, kd; // Constants which we choose experimentally
