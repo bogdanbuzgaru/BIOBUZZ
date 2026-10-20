@@ -66,6 +66,22 @@ public class OpSwerve extends LinearOpMode {
     /** True if a positive steer power turns that module CLOCKWISE seen from above. */
     public static boolean[] STEER_INVERTED = {false, false, false, false};
 
+    /**
+     * True if that steering motor's encoder count FALLS when the motor gets
+     * positive power. If this is wrong the module spins or shakes; the safety
+     * cut-off below will say so on telemetry.
+     */
+    public static boolean[] STEER_ENCODER_REVERSED = {false, false, false, false};
+
+    // ---------------- steering safety cut-off ----------------
+
+    /** Steering power above which the encoder must be seen moving the right way. */
+    private static final double FAULT_POWER = 0.4;
+    /** How long it may fail to before that module's steering is switched off. */
+    private static final double FAULT_TIME_S = 1.0;
+    /** Fewer counts than this during a fault means the encoder isn't counting at all. */
+    private static final double FAULT_MIN_TICKS = 10.0;
+
     // ---------------- averaging ----------------
 
     /** Samples averaged in INIT to find the starting angle. */
@@ -83,6 +99,12 @@ public class OpSwerve extends LinearOpMode {
     private final PwmDutyEstimator[] live = new PwmDutyEstimator[4];
     private final SwerveModule[] modules = new SwerveModule[4];
     private List<LynxModule> hubs;
+
+    private final boolean[] steerFault = new boolean[4];
+    private final String[] faultReason = new String[4];
+    private final double[] faultTime = new double[4];
+    private final double[] faultTicks = new double[4];
+    private final double[] lastSteerTicks = new double[4];
 
     @Override
     public void runOpMode() {
@@ -118,7 +140,8 @@ public class OpSwerve extends LinearOpMode {
             steerAngles[i] = new SteerMotorAngleSensor(
                     () -> steerMotors[k].getCurrentPosition(),
                     SwerveConstants.STEER_TICKS_PER_REV,
-                    SwerveConstants.STEER_GEAR_RATIO);
+                    SwerveConstants.STEER_GEAR_RATIO,
+                    STEER_ENCODER_REVERSED[i]);
 
             seed[i] = new PwmDutyEstimator(SEED_SAMPLES);
             live[i] = new PwmDutyEstimator(LIVE_SAMPLES);
@@ -144,7 +167,7 @@ public class OpSwerve extends LinearOpMode {
 
             modules[i] = new SwerveModule(LABELS[i],
                     power -> driveMotors[k].setPower(power),
-                    power -> steerMotors[k].setPower(power),
+                    power -> steerMotors[k].setPower(steerFault[k] ? 0.0 : power),
                     steerAngles[i], driveVel, steerPid, drivePid)
                     .setDriveFeedforward(SwerveConstants.DRIVE_KS,
                             SwerveConstants.DRIVE_KV, SwerveConstants.DRIVE_KA)
@@ -184,12 +207,8 @@ public class OpSwerve extends LinearOpMode {
                 telemetryTimer.reset();
 
                 telemetry.addLine("Keep the robot STILL. A = restart average. PLAY when +- is small.");
-                telemetry.addData("sample rate", "%.0f Hz", sampleRateHz);
-                for (int i = 0; i < 4; i++) {
-                    telemetry.addData(LABELS[i], "encoder %6.1f° ±%4.1f   wheel %6.1f°   n %d",
-                            seed[i].getAngleDegrees(), seed[i].getStdErrorDegrees(),
-                            wheelDegreesFrom(seed[i], i), seed[i].getSampleCount());
-                }
+                addThroughBoreTelemetry(seed, sampleRateHz);
+                addSteerEncoderTelemetry();
                 telemetry.update();
             }
         }
@@ -216,6 +235,9 @@ public class OpSwerve extends LinearOpMode {
         }
 
         drive.reset();
+        for (int i = 0; i < 4; i++) {
+            lastSteerTicks[i] = steerAngles[i].getTicks();
+        }
         ElapsedTime loopTimer = new ElapsedTime();
 
         // ---------------- MAIN LOOP ----------------
@@ -229,17 +251,25 @@ public class OpSwerve extends LinearOpMode {
                     -gamepad1.right_stick_x,
                     false);
 
-            telemetry.addData("loop", "%.1f ms", loopTimer.milliseconds());
+            double dt = loopTimer.seconds();
             loopTimer.reset();
-            for (int i = 0; i < 4; i++) {
-                telemetry.addData(LABELS[i],
-                        "encoder %6.1f° ±%4.1f | wheel(abs) %6.1f° | wheel(motor) %6.1f° | err %5.1f°",
-                        live[i].getAngleDegrees(), live[i].getStdErrorDegrees(),
-                        wheelDegreesFrom(live[i], i),
-                        Math.toDegrees(steerAngles[i].getAngleRadians()),
-                        modules[i].getSteerErrorDegrees());
+            checkSteering(dt);
+
+            // Y clears the cut-off once you've fixed the cause.
+            if (gamepad1.y) {
+                for (int i = 0; i < 4; i++) {
+                    steerFault[i] = false;
+                    faultTime[i] = 0.0;
+                }
             }
-            telemetry.addLine("encoder / wheel(abs) are averaged over ~1 s and only accurate while the wheel is still.");
+
+            for (int i = 0; i < 4; i++) {
+                if (steerFault[i]) {
+                    telemetry.addLine("!! " + LABELS[i] + " STEERING OFF: " + faultReason[i]);
+                }
+            }
+            addThroughBoreTelemetry(live, 1.0 / Math.max(dt, 1e-3));
+            addSteerEncoderTelemetry();
             telemetry.update();
         }
 
@@ -256,6 +286,90 @@ public class OpSwerve extends LinearOpMode {
             seed[i].addSample(high);
             live[i].addSample(high);
         }
+    }
+
+    /**
+     * Switches a module's steering off when its encoder doesn't follow the
+     * motor: pushing hard for FAULT_TIME_S while the count stands still (cable
+     * in the wrong port, or unplugged) or runs the wrong way (reversed count).
+     * Either one makes the module spin or shake.
+     */
+    private void checkSteering(double dt) {
+        for (int i = 0; i < 4; i++) {
+            double ticks = steerAngles[i].getTicks();
+            double moved = ticks - lastSteerTicks[i];
+            lastSteerTicks[i] = ticks;
+            if (steerFault[i]) {
+                continue;
+            }
+
+            double power = modules[i].getSteerOutput();
+            if (Math.abs(power) < FAULT_POWER || moved * power > 0) {
+                faultTime[i] = 0.0;
+                faultTicks[i] = 0.0;
+                continue;
+            }
+
+            faultTime[i] += dt;
+            faultTicks[i] += Math.copySign(moved, power);   // negative = wrong way
+            if (faultTime[i] > FAULT_TIME_S) {
+                steerFault[i] = true;
+                faultReason[i] = Math.abs(faultTicks[i]) < FAULT_MIN_TICKS
+                        ? "encoder not counting. Check " + STEER_NAMES[i]
+                          + "'s encoder cable is in ITS OWN motor port. Y to retry."
+                        : "encoder counts backwards. Flip STEER_ENCODER_REVERSED[" + i
+                          + "]. Y to retry.";
+            }
+        }
+    }
+
+    /**
+     * REV Through Bore absolute encoders: the encoder's own angle (averaged, with
+     * its +- uncertainty), the wheel angle that gives after direction and offset,
+     * and how many samples are in the average. Only accurate while the wheel is
+     * still: in INIT it averages everything since INIT, while driving the last
+     * ~1 s.
+     */
+    private void addThroughBoreTelemetry(PwmDutyEstimator[] estimators, double sampleRateHz) {
+        telemetry.addLine(String.format("THROUGH BORE  (encoder | wheel | samples)   %.0f samples/s",
+                sampleRateHz));
+        for (int i = 0; i < 4; i++) {
+            telemetry.addData(ENCODER_NAMES[i], "%6.1f° ±%4.1f | %6.1f° | %d",
+                    estimators[i].getAngleDegrees(), estimators[i].getStdErrorDegrees(),
+                    wheelDegreesFrom(estimators[i], i), estimators[i].getSampleCount());
+        }
+    }
+
+    /**
+     * Steering motors' built-in encoders: port, raw count, counts per second, the
+     * wheel angle the steering loop believes, the power being sent, and whether
+     * the count moves the way that power should move it. Turn a module by hand
+     * in INIT to see which counter moves.
+     */
+    private void addSteerEncoderTelemetry() {
+        telemetry.addLine("STEER MOTOR ENCODERS  (port | count | counts/s | wheel | power | check)");
+        for (int i = 0; i < 4; i++) {
+            // Checked with the reversal applied, as the steering loop sees it.
+            double sign = STEER_ENCODER_REVERSED[i] ? -1.0 : 1.0;
+            double velocity = sign * steerMotors[i].getVelocity();
+            double power = steerFault[i] ? 0.0 : modules[i].getSteerOutput();
+            telemetry.addData(STEER_NAMES[i], "p%d | %7d | %6.0f | %6.1f° | %5.2f | %s",
+                    steerMotors[i].getPortNumber(),
+                    steerMotors[i].getCurrentPosition(), velocity,
+                    Math.toDegrees(steerAngles[i].getAngleRadians()),
+                    power, directionCheck(power, velocity));
+        }
+    }
+
+    /** Does the encoder move the way the motor is being pushed? */
+    private static String directionCheck(double power, double countsPerSecond) {
+        if (Math.abs(power) < 0.1) {
+            return "idle";
+        }
+        if (Math.abs(countsPerSecond) < 20.0) {
+            return "NOT COUNTING";
+        }
+        return countsPerSecond * power > 0 ? "ok" : "BACKWARDS";
     }
 
     /** Wheel angle in degrees, -180..180, from an encoder estimate. */

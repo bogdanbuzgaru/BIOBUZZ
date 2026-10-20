@@ -17,27 +17,38 @@ public class SteerMotorAngleSensor implements SwerveHardware.AngleSensor {
 
     private final SwerveHardware.DoubleSource ticks;
     private final double radiansPerTick;
+    private final double sign;
     private double offsetRadians = 0.0;
 
     /**
      * @param ticks            e.g. steerMotor::getCurrentPosition
      * @param ticksPerMotorRev encoder counts per motor output shaft revolution
      * @param steerGearRatio   motor output revs per 360 degrees of module rotation
+     * @param reversed         true if the count FALLS when the motor gets positive
+     *                         power (a miswired or reversed encoder). Wrong here
+     *                         means positive feedback: the module spins away.
      */
     public SteerMotorAngleSensor(SwerveHardware.DoubleSource ticks,
                                  double ticksPerMotorRev,
-                                 double steerGearRatio) {
+                                 double steerGearRatio,
+                                 boolean reversed) {
         this.ticks = ticks;
         this.radiansPerTick = (2.0 * Math.PI) / (ticksPerMotorRev * steerGearRatio);
+        this.sign = reversed ? -1.0 : 1.0;
     }
 
     @Override
     public double getAngleRadians() {
-        return SwerveHardware.normalize(ticks.get() * radiansPerTick + offsetRadians);
+        return SwerveHardware.normalize(getTicks() * radiansPerTick + offsetRadians);
     }
 
     /** Declare where the wheel really points right now, in radians. */
     public void setCurrentAngle(double trueAngleRadians) {
-        offsetRadians = trueAngleRadians - ticks.get() * radiansPerTick;
+        offsetRadians = trueAngleRadians - getTicks() * radiansPerTick;
+    }
+
+    /** Encoder count with the reversal applied: rises as the angle rises. */
+    public double getTicks() {
+        return sign * ticks.get();
     }
 }
