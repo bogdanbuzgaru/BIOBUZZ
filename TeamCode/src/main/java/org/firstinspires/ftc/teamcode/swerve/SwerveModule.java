@@ -151,10 +151,21 @@ public class SwerveModule {
 
     /** Point the wheel somewhere without driving. Useful for an X-lock. */
     public void setAngleOnly(double angleRadians, double dt) {
+        setAngleOnly(angleRadians, dt, true);
+    }
+
+    /**
+     * Point the wheel somewhere without driving.
+     *
+     * @param allowFlip true to settle on the opposite angle when that is closer,
+     *                  which is the same thing for driving. false to reach the
+     *                  exact angle, e.g. for homing every wheel to forward.
+     */
+    public void setAngleOnly(double angleRadians, double dt, boolean allowFlip) {
         double current = steerAngle.getAngleRadians();
         double target = SwerveHardware.normalize(angleRadians);
         double delta = SwerveHardware.normalize(target - current);
-        if (Math.abs(delta) > Math.PI / 2.0) {
+        if (allowFlip && Math.abs(delta) > Math.PI / 2.0) {
             target = SwerveHardware.normalize(target + Math.PI);
         }
         lastTargetAngle = target;
