@@ -73,6 +73,9 @@ public class OpSwerveCalibration extends LinearOpMode {
         }
     }
 
+    /** While capturing, sample the Through Bores this long per loop, ms. */
+    private static final double CAPTURE_BURST_MS = 25.0;
+
     /** Encoder readings this close to 0°/360° can't be averaged reliably. */
     private static final double WRAP_MARGIN_DEG = 10.0;
 
@@ -98,8 +101,13 @@ public class OpSwerveCalibration extends LinearOpMode {
 
     /** One pass of the loop; the same in INIT and after PLAY. */
     private void step() {
-        rig.sampleEncoders();
-        samplesSinceRate++;
+        if (capturing) {
+            // Sample in bursts so the long capture average fills quickly.
+            samplesSinceRate += rig.sampleEncodersFor(CAPTURE_BURST_MS);
+        } else {
+            rig.sampleEncoders();
+            samplesSinceRate++;
+        }
 
         // TRIANGLE: the wheels are straight right now. Save that as 0° at once,
         // then also start a fresh Through Bore average of this position.

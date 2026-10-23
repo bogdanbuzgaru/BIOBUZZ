@@ -20,10 +20,16 @@ import org.firstinspires.ftc.teamcode.swerve.SwerveRig;
  * PLAY: steering runs on each steering motor's built-in encoder, starting
  * from the last Through Bore reading. Left stick drives, right stick turns,
  * Y / TRIANGLE retries a module the steering safety cut-off switched off.
+ * The D-pad drives too: up forward, down back, left / right sideways, and two
+ * neighbouring buttons together (e.g. up + right) drive on that diagonal.
+ * While a D-pad button is held it replaces the left stick.
  * Driving is robot-centric.
  */
 @TeleOp(name = "OpSwerve", group = "drive")
 public class OpSwerve extends OpMode {
+
+    /** Drive motor power while driving on the D-pad (0 to 1). */
+    private static final double DPAD_POWER = 0.35;
 
     /** How often telemetry is rebuilt, so the loop spends its time sampling. */
     private static final double TELEMETRY_INTERVAL_MS = 200.0;
@@ -99,11 +105,26 @@ public class OpSwerve extends OpMode {
         double dt = nextDt();
 
         // Sticks report y-down and x-right; negate for +x forward, +y left, CCW positive.
-        drive.driveNormalized(
-                -gamepad1.left_stick_y,
-                -gamepad1.left_stick_x,
-                -gamepad1.right_stick_x,
-                false);
+        double forward = -gamepad1.left_stick_y;
+        double strafe = -gamepad1.left_stick_x;
+
+        // D-pad: +x forward, +y left. Two neighbouring buttons add up to a
+        // diagonal; opposite ones cancel. It asks for DPAD_POWER of top speed
+        // and caps the drive motors at DPAD_POWER, so they run at that power.
+        // driveNormalized squares each axis, so each one gets the square root
+        // of its share: a diagonal is then exactly as fast as a straight move.
+        double dpadForward = (gamepad1.dpad_up ? 1.0 : 0.0) - (gamepad1.dpad_down ? 1.0 : 0.0);
+        double dpadStrafe = (gamepad1.dpad_left ? 1.0 : 0.0) - (gamepad1.dpad_right ? 1.0 : 0.0);
+        double dpadLength = Math.hypot(dpadForward, dpadStrafe);
+        if (dpadLength > 0.0) {
+            forward = Math.copySign(Math.sqrt(DPAD_POWER * Math.abs(dpadForward) / dpadLength), dpadForward);
+            strafe = Math.copySign(Math.sqrt(DPAD_POWER * Math.abs(dpadStrafe) / dpadLength), dpadStrafe);
+            rig.setDrivePowerLimit(DPAD_POWER);
+        } else {
+            rig.setDrivePowerLimit(SwerveRig.MAX_DRIVE_POWER);
+        }
+
+        drive.driveNormalized(forward, strafe, -gamepad1.right_stick_x, false);
 
         rig.checkSteering(dt);
 

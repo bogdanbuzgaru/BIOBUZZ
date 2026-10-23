@@ -34,7 +34,7 @@ public final class SwerveConstants {
     public static final RevHubOrientationOnRobot.LogoFacingDirection LOGO_DIR =
             RevHubOrientationOnRobot.LogoFacingDirection.UP;
     public static final RevHubOrientationOnRobot.UsbFacingDirection USB_DIR =
-            RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
+            RevHubOrientationOnRobot.UsbFacingDirection.RIGHT;
 
     // ------------------------------------------------------------------
     // motors
@@ -143,8 +143,8 @@ public final class SwerveConstants {
             MAX_SPEED_MPS / Math.hypot(HALF_LENGTH_M, HALF_WIDTH_M);
 
     /** The heavy-robot knob. Raise until the wheels break traction, then back off. */
-    /** Just under the sustainable figure below. Raise once it drives cleanly. */
-    public static final double MAX_ACCEL_MPS2 = 1.2;
+    /** Kept low so the robot does not tip when it starts or stops (was 1.2). */
+    public static final double MAX_ACCEL_MPS2 = 0.6;
     public static final double MAX_ANGULAR_ACCEL_RAD_PER_SEC2 = 3.0;
 
     // ------------------------------------------------------------------

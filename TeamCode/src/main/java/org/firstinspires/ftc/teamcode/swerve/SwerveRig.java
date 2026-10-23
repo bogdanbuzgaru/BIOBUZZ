@@ -1,14 +1,17 @@
 package org.firstinspires.ftc.teamcode.swerve;
 
 import com.qualcomm.hardware.lynx.LynxModule;
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.util.ReadWriteFile;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 
 import java.io.File;
@@ -45,7 +48,17 @@ public class SwerveRig {
     public static final double ENCODER_DIRECTION = -1.0;
 
     /** True if a positive drive power moves that wheel BACKWARD. */
-    public static final boolean[] DRIVE_INVERTED = {true, false, true, false};
+    public static final boolean[] DRIVE_INVERTED = {true, false, true, true};
+
+    /** Highest power ever sent to a drive motor (0 to 1). */
+    public static final double MAX_DRIVE_POWER = 0.75;
+
+    /**
+     * Fastest a drive motor's power may change, per second, speeding up and
+     * slowing down alike: 0.75 takes 1 s from 0 to 0.75. Lower it if the
+     * robot still tips when starting or stopping.
+     */
+    public static final double DRIVE_POWER_RATE_PER_S = 0.75;
 
     /** True if a positive steer power turns that module CLOCKWISE seen from above. */
     public static final boolean[] STEER_INVERTED = {false, false, false, false};
@@ -68,8 +81,11 @@ public class SwerveRig {
 
     // ---------------- averaging ----------------
 
-    /** Samples averaged in INIT to find the starting angle. */
-    public static final int SEED_SAMPLES = 6000;
+    /**
+     * Most samples in an INIT average, and how many a calibration capture
+     * takes. 40000 is good to about ±1° even at the worst angle (6000 was ±2.3°).
+     */
+    public static final int SEED_SAMPLES = 40000;
     /** Samples in the rolling average shown while running (about a second). */
     private static final int LIVE_SAMPLES = 300;
     /** Refuse to steer with fewer samples than this. */
@@ -86,6 +102,9 @@ public class SwerveRig {
     private final SwerveModule[] modules = new SwerveModule[4];
     private final List<LynxModule> hubs;
     private final SwerveDrive drive;
+    /** The Control Hub's built-in IMU, or null if it isn't in the configuration. */
+    private final IMU imu;
+    private String imuStatus;
 
     /** A wheel within this many degrees of 0 counts as homed. */
     public static final double HOME_TOLERANCE_DEG = 2.0;
@@ -100,6 +119,9 @@ public class SwerveRig {
 
     private final double[] steerPowerSent = new double[4];
     private final double[] drivePowerSent = new double[4];
+    private final long[] drivePowerTime = new long[4];
+    /** Drive power cap right now; setDrivePowerLimit() lowers it below MAX_DRIVE_POWER. */
+    private double drivePowerLimit = MAX_DRIVE_POWER;
     private final boolean[] steerFault = new boolean[4];
     private final String[] faultReason = new String[4];
     private final double[] faultTime = new double[4];
@@ -145,11 +167,11 @@ public class SwerveRig {
             seed[i] = new PwmDutyEstimator(SEED_SAMPLES);
             live[i] = new PwmDutyEstimator(LIVE_SAMPLES);
 
-            SwerveHardware.VelocitySensor driveVel = new SwerveHardware.EncoderVelocitySensor(
-                    () -> driveMotors[k].getVelocity(),
-                    SwerveConstants.DRIVE_TICKS_PER_REV,
-                    SwerveConstants.DRIVE_GEAR_RATIO,
-                    SwerveConstants.WHEEL_CIRCUMFERENCE_M);
+            // The drive motors have no encoders, so no speed feedback: drive
+            // power is feedforward only (DRIVE_KV x speed + DRIVE_KS). A speed
+            // sensor here would always read 0 and the feedback would keep
+            // adding power on top of what was asked for.
+            SwerveHardware.VelocitySensor driveVel = null;
 
             PIDController steerPid = new PIDController(
                     SwerveConstants.STEER_KP, SwerveConstants.STEER_KI, SwerveConstants.STEER_KD)
@@ -166,8 +188,16 @@ public class SwerveRig {
 
             modules[i] = new SwerveModule(LABELS[i],
                     power -> {
-                        driveMotors[k].setPower(power);
-                        drivePowerSent[k] = power;
+                        long now = System.nanoTime();
+                        double dt = drivePowerTime[k] == 0L ? 0.0
+                                : Math.min((now - drivePowerTime[k]) / 1e9, 0.1);
+                        drivePowerTime[k] = now;
+                        double target = Math.max(-drivePowerLimit, Math.min(drivePowerLimit, power));
+                        double step = DRIVE_POWER_RATE_PER_S * dt;
+                        double applied = drivePowerSent[k]
+                                + Math.max(-step, Math.min(step, target - drivePowerSent[k]));
+                        driveMotors[k].setPower(applied);
+                        drivePowerSent[k] = applied;
                     },
                     power -> {
                         double applied = steerFault[k] ? 0.0 : power;
@@ -188,7 +218,47 @@ public class SwerveRig {
                 .setMaxAcceleration(SwerveConstants.MAX_ACCEL_MPS2)
                 .setMaxAngularAcceleration(SwerveConstants.MAX_ANGULAR_ACCEL_RAD_PER_SEC2);
 
+        imu = initImu(hardwareMap);
+
         offsetsFromFile = loadOffsets();
+    }
+
+    // ------------------------------------------------------------------
+    // IMU (heading)
+    // ------------------------------------------------------------------
+
+    private IMU initImu(HardwareMap hardwareMap) {
+        try {
+            IMU found = hardwareMap.get(IMU.class, "imu");
+            found.initialize(new IMU.Parameters(
+                    new RevHubOrientationOnRobot(SwerveConstants.LOGO_DIR, SwerveConstants.USB_DIR)));
+            found.resetYaw();
+            imuStatus = "ok";
+            return found;
+        } catch (Exception e) {
+            imuStatus = "NO IMU named \"imu\" in the configuration: " + e.getMessage();
+            return null;
+        }
+    }
+
+    public boolean hasImu() {
+        return imu != null;
+    }
+
+    public String getImuStatus() {
+        return imuStatus;
+    }
+
+    /** Heading in degrees, counter-clockwise positive, since the last resetHeading(). 0 without an IMU. */
+    public double getHeadingDegrees() {
+        return imu == null ? 0.0 : imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
+    }
+
+    /** Make the way the robot points right now heading 0. */
+    public void resetHeading() {
+        if (imu != null) {
+            imu.resetYaw();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -222,6 +292,24 @@ public class SwerveRig {
             n++;
         } while (System.nanoTime() < end);
         return n;
+    }
+
+    /**
+     * Cap the drive motors' power below MAX_DRIVE_POWER, e.g. for slow D-pad
+     * driving. Never above MAX_DRIVE_POWER; pass MAX_DRIVE_POWER to go back.
+     */
+    public void setDrivePowerLimit(double limit) {
+        drivePowerLimit = Math.max(0.0, Math.min(MAX_DRIVE_POWER, limit));
+    }
+
+    /**
+     * true: the drive motors coast at zero power, so a rolling robot slows
+     * down by itself. false: they brake (the normal setting).
+     */
+    public void setDriveCoast(boolean coast) {
+        for (DcMotorEx m : driveMotors) {
+            m.setZeroPowerBehavior(coast ? DcMotor.ZeroPowerBehavior.FLOAT : DcMotor.ZeroPowerBehavior.BRAKE);
+        }
     }
 
     /** Start the INIT average again, e.g. after the robot was bumped. */
