@@ -26,7 +26,7 @@ import java.util.List;
  * Used by OpSwerve and OpSwerveCalibration so both run the same code.
  *
  * Wheel angle from a Through Bore:
- *     wheel = ENCODER_DIRECTION x encoder + offset
+ *     wheel = ENCODER_DIRECTION[i] x encoder + offset
  * The four offsets are saved on the robot (SwerveOffsets.txt) by
  * OpSwerveCalibration; until that file exists, DEFAULT_OFFSET_DEG is used.
  */
@@ -44,18 +44,23 @@ public class SwerveRig {
     /** Offsets used until OpSwerveCalibration has saved some, degrees. */
     public static final double[] DEFAULT_OFFSET_DEG = {0.0, 0.0, 0.0, 0.0};
 
-    /** -1: when the encoder turns +15 degrees, the wheel turns -15. */
-    public static final double ENCODER_DIRECTION = -1.0;
+    /**
+     * Per wheel, -1: when its Through Bore turns +15 degrees, the wheel turns
+     * -15. Must agree with the steering motor encoder: turning a wheel by hand
+     * in OpSwerveCalibration, "wheels now" and the Through Bore wheel angle
+     * must move the same way. Flipping one needs a new FORWARD capture.
+     */
+    public static final double[] ENCODER_DIRECTION = {-1.0, -1.0, -1.0, -1.0};
 
     /** True if a positive drive power moves that wheel BACKWARD. */
-    public static final boolean[] DRIVE_INVERTED = {true, false, true, true};
+    public static final boolean[] DRIVE_INVERTED = {true, false, true, false};
 
     /** Highest power ever sent to a drive motor (0 to 1). */
-    public static final double MAX_DRIVE_POWER = 0.75;
+    public static final double MAX_DRIVE_POWER = 0.45;
 
     /**
      * Fastest a drive motor's power may change, per second, speeding up and
-     * slowing down alike: 0.75 takes 1 s from 0 to 0.75. Lower it if the
+     * slowing down alike: 0.75 takes 0.6 s from 0 to 0.45. Lower it if the
      * robot still tips when starting or stopping.
      */
     public static final double DRIVE_POWER_RATE_PER_S = 0.75;
@@ -82,8 +87,8 @@ public class SwerveRig {
     // ---------------- averaging ----------------
 
     /**
-     * Most samples in an INIT average, and how many a calibration capture
-     * takes. 40000 is good to about ±1° even at the worst angle (6000 was ±2.3°).
+     * Most samples in an INIT average. 40000 is good to about ±1° even at the
+     * worst angle (6000 was ±2.3°).
      */
     public static final int SEED_SAMPLES = 40000;
     /** Samples in the rolling average shown while running (about a second). */
@@ -340,6 +345,26 @@ public class SwerveRig {
         return enough;
     }
 
+    /** Start one Through Bore's INIT average again, e.g. once its wheel has stopped turning. */
+    public void restartSeedAverage(int i) {
+        seed[i].reset();
+    }
+
+    /**
+     * Tell one steering encoder where its wheel points, from its INIT average.
+     * Call finishSeeding() once every wheel is done.
+     */
+    public void seedFromThroughBore(int i) {
+        steerAngles[i].setCurrentAngle(Math.toRadians(wheelDegreesFrom(seed[i], i)));
+        lastSteerTicks[i] = steerAngles[i].getTicks();
+    }
+
+    /** After seeding wheel by wheel: drive from the seeded angles. */
+    public void finishSeeding() {
+        drive.reset();
+        seeded = true;
+    }
+
     /** Samples in a Through Bore's INIT average. */
     public int getSeedSampleCount(int i) {
         return seed[i].getSampleCount();
@@ -467,7 +492,7 @@ public class SwerveRig {
 
     /** Wheel angle in degrees, -180..180, from an encoder estimate. */
     private double wheelDegreesFrom(PwmDutyEstimator estimator, int i) {
-        double deg = ENCODER_DIRECTION * estimator.getAngleDegrees() + offsetDeg[i];
+        double deg = ENCODER_DIRECTION[i] * estimator.getAngleDegrees() + offsetDeg[i];
         return Math.toDegrees(SwerveHardware.normalize(Math.toRadians(deg)));
     }
 
@@ -479,10 +504,10 @@ public class SwerveRig {
         return offsetDeg[i];
     }
 
-    /** True once every Through Bore's INIT average holds the full SEED_SAMPLES. */
-    public boolean seedAveragesFull() {
+    /** True once every Through Bore's INIT average holds at least n samples (at most SEED_SAMPLES). */
+    public boolean seedAveragesHold(int n) {
         for (PwmDutyEstimator e : seed) {
-            if (e.getSampleCount() < SEED_SAMPLES) {
+            if (e.getSampleCount() < Math.min(n, SEED_SAMPLES)) {
                 return false;
             }
         }
@@ -492,13 +517,13 @@ public class SwerveRig {
     /**
      * Declare that every wheel is pointing straight forward right now: each
      * offset is set so the current Through Bore average reads as a 0° wheel
-     * (offset = -ENCODER_DIRECTION x encoder), then saved.
+     * (offset = -ENCODER_DIRECTION[i] x encoder), then saved.
      *
      * @return false if the save failed; getSaveStatus() says why
      */
     public boolean captureForwardOffsets() {
         for (int i = 0; i < 4; i++) {
-            double deg = -ENCODER_DIRECTION * seed[i].getAngleDegrees();
+            double deg = -ENCODER_DIRECTION[i] * seed[i].getAngleDegrees();
             offsetDeg[i] = Math.toDegrees(SwerveHardware.normalize(Math.toRadians(deg)));
         }
         return saveOffsets();

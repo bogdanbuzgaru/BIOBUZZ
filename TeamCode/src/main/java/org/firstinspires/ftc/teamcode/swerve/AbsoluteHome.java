@@ -13,180 +13,172 @@ import org.firstinspires.ftc.robotcore.external.Telemetry;
  * Bore on a digital port can only be read as a slow average while the wheel
  * stands still.
  *
- * A Through Bore reading gets more accurate the longer it averages, and the
- * whole thing has to finish inside TIME_LIMIT_S, so:
- *   1. ROUGH reading   quick: a wheel far from forward needs only a rough
- *                      angle to get close
- *   2. TURN            every wheel to forward on its steering encoder
- *   3. PRECISE reading until it is good to PRECISE_ERROR_DEG, or until
- *                      MEASURE_DEADLINE_S, whichever comes first
- *   4. TURN            the small correction that reading shows, slowly, so
- *                      the wheel stops within TURN_DONE_DEG
- *   5. If time is left, steps 3 and 4 repeat as a check. Each new reading is
- *      combined with what was already known (weighted by how exact each one
- *      is), so a short check reading can only improve the result.
- * If a reading finds a wheel more than RECHECK_ABOVE_DEG off (it didn't turn
- * properly), it stops early and the wheels turn again before measuring on.
+ * Each wheel goes on its own:
+ *   1. READ    average its Through Bore while it stands still
+ *   2. done    if it is within DONE_DEG of 0, it is left alone from then on
+ *   3. TURN    otherwise turn it by exactly what that reading says is missing
+ *   4. SETTLE  let it stop, then back to 1
+ * A wheel keeps getting adjustments until it is home or time runs out.
+ * A wheel far off gets a quick rough reading, a wheel close to 0 a precise one.
+ *
+ * Every turn ends with a + approach (see SteerApproach), so the Through
+ * Bores' play is on the same side every time they're read after a turn.
+ *
+ * Gives up after TIME_LIMIT_S; telemetry then says which wheel isn't home.
  *
  * Tuning:
- *   - Telemetry shows samples/s and the expected accuracy at the end. More
- *     samples/s means more accuracy in the same time.
- *   - A wheel creeps to a stop short of 0° on the ground: raise KICK_RAMP_PER_S.
- *   - A wheel overshoots and swings back: lower POWER_PER_DEG or KICK_START.
+ *   - A wheel's correction barely changes its reading: raise SteerApproach.BACKLASH_TAKEUP_DEG.
+ *   - A wheel overshoots its target a lot: lower MAX_POWER.
  */
 public class AbsoluteHome {
 
     // ---------------- time ----------------
 
     /** Homing never takes longer than this, seconds. */
-    private static final double TIME_LIMIT_S = 28.0;
-    /** A precise reading stops here, leaving time for the last correction. */
-    private static final double MEASURE_DEADLINE_S = 24.0;
-    /** Start a check reading only if at least this long is left before the deadline. */
-    private static final double CHECK_MIN_S = 4.0;
+    private static final double TIME_LIMIT_S = 30.0;
+    /** No new turn is started with less time than this left, seconds. */
+    private static final double LAST_TURN_S = 3.0;
 
     // ---------------- readings ----------------
 
-    /** A precise reading stops once every wheel is known to this (one standard error), degrees. */
-    private static final double PRECISE_ERROR_DEG = 0.75;
-    /** The rough reading may be off by this fraction of the distance to forward... */
+    /** A wheel this close to 0 by its Through Bore is home and isn't touched again, degrees. */
+    private static final double DONE_DEG = 1.0;
+    /**
+     * A reading's own ± is allowed on top of DONE_DEG, up to this much, so a
+     * wheel isn't turned over what may just be noise, degrees.
+     */
+    private static final double NOISE_ALLOWANCE_MAX_DEG = 1.0;
+    /** A reading is good enough once known to this (one standard error), degrees... */
+    private static final double PRECISE_ERROR_DEG = 0.5;
+    /** ...or to this fraction of how far the wheel is from 0, if that's looser. */
     private static final double ROUGH_FRACTION = 0.2;
-    /** ...but needn't be better than this. */
-    private static final double ROUGH_MIN_ERROR_DEG = 5.0;
-    /** A wheel further off than this needs turning before measuring precisely... */
-    private static final double RECHECK_ABOVE_DEG = 15.0;
-    /** ...which a reading this exact can already tell. */
-    private static final double RECHECK_KNOWN_DEG = 3.0;
-    /** While measuring, sample the Through Bores this long per loop, ms. */
+    /** A reading stops after this long however good it is, seconds. */
+    private static final double READING_MAX_S = 5.0;
+    /** While a wheel is reading and none is turning, sample the Through Bores this long per loop, ms. */
     private static final double SAMPLE_BURST_MS = 25.0;
     /** Fewest samples in a reading. */
     private static final int MIN_SAMPLES = 300;
-    /** Time for the wheels to stop after turning before measuring. */
+    /** Time for a wheel to stop after turning before it is read. */
     private static final double SETTLE_S = 0.3;
-    /** Error a turn adds to what's known (steering gear backlash), degrees. */
-    private static final double TURN_ERROR_DEG = 1.0;
 
     // ---------------- turning ----------------
 
-    /** Most steering power while turning: full power, to beat friction on the ground. */
+    /** Most steering power while turning. */
     private static final double MAX_POWER = 1.0;
-    /** Power per degree still to go; MAX_POWER from 30° out. */
-    private static final double POWER_PER_DEG = MAX_POWER / 30.0;
     /**
-     * Least power near the target. It rises by KICK_RAMP_PER_S while a wheel
-     * is stuck and falls back once it moves, so each wheel gets just enough
-     * to beat friction instead of a fixed kick that overshoots.
+     * A turn toward 0 that leaves the wheel off on the same side by more than
+     * this extra went the wrong way, degrees. Only shown on telemetry; the
+     * wheel is still corrected. Large, so the Through Bore's play alone never
+     * trips it.
      */
-    private static final double KICK_START = 0.08;
-    private static final double KICK_RAMP_PER_S = 1.2;
-    /** Less movement than this in one loop counts as stuck, degrees (a steering tick is ~0.23°). */
-    private static final double STUCK_DEG = 0.1;
-    /** The turn is done when every wheel is this close by its steering encoder... */
-    private static final double TURN_DONE_DEG = 0.5;
-    /** ...and has stayed there this long. */
-    private static final double TURN_HOLD_S = 0.15;
-    /** Stop turning after this long even if a wheel isn't there. */
-    private static final double TURN_TIMEOUT_S = 2.5;
-    /** Give up after this many readings. */
-    private static final int MAX_READINGS = 8;
+    private static final double WRONG_WAY_MARGIN_DEG = 10.0;
 
-    private enum State { MEASURE, TURN, SETTLE, DONE }
+    private enum Step { READ, TURN, SETTLE, HOME, NO_SIGNAL }
 
     private final SwerveRig rig;
-    private State state = State.MEASURE;
-    private double stateTime = 0.0;
+    private final SteerApproach approach;
+    private final Step[] step = new Step[4];
+    private final double[] stepTime = new double[4];
     private double totalTime = 0.0;
-    private int readings = 0;
-    /** The turn under way is a small correction after a precise reading. */
-    private boolean correction = false;
-    private double holdTime = 0.0;
+    private boolean finished = false;
     private String result = "";
 
     private int samplesCounted = 0;
     private double rateClock = 0.0;
     private double samplesPerSecond = 0.0;
 
-    private final double[] errorDeg = new double[4];
-    private final boolean[] measured = new boolean[4];
-    /** One standard error of where each wheel is believed to be, degrees. */
-    private final double[] knownDeg = {Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY,
-            Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY};
-    /** Through Bore angle at the last reading, to see which way the wheel really went. */
-    private final double[] lastReadingDeg = new double[4];
+    /** Readings taken of each wheel. */
+    private final int[] readings = new int[4];
+    /** Wheel angle at its last reading, degrees, and that reading's ±. */
+    private final double[] readingDeg = new double[4];
+    private final double[] readingErrorDeg = new double[4];
     private final boolean[] wrongWay = new boolean[4];
-    private final double[] kick = new double[4];
-    private final double[] lastTogo = new double[4];
+    /** Ran out of time before getting within DONE_DEG. */
+    private final boolean[] outOfTime = new boolean[4];
 
     public AbsoluteHome(SwerveRig rig) {
         this.rig = rig;
+        this.approach = new SteerApproach(rig, MAX_POWER);
         rig.restartSeedAverage();
+        for (int i = 0; i < 4; i++) {
+            step[i] = Step.READ;
+        }
     }
 
     public boolean isDone() {
-        return state == State.DONE;
+        return finished;
     }
 
-    /** True while the steering motors are turning the wheels. */
+    /** True while a steering motor is turning a wheel. */
     public boolean isTurning() {
-        return state == State.TURN;
+        if (finished) {
+            return false;
+        }
+        for (Step s : step) {
+            if (s == Step.TURN) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Stop homing where it is (e.g. PLAY was pressed first) and leave every steering encoder seeded. */
+    public void stop() {
+        if (!finished) {
+            finish("stopped before every wheel was home");
+        }
     }
 
     public void update(double dt) {
-        stateTime += dt;
-        if (state != State.DONE) {
-            totalTime += dt;
+        if (finished) {
+            allPowerOff();
+            return;
         }
-        switch (state) {
-            case MEASURE:
-                allPowerOff();
-                countSamples(rig.sampleEncodersFor(SAMPLE_BURST_MS), dt);
-                if (readingsReady()) {
-                    useReadings();
-                }
-                break;
+        totalTime += dt;
+        approach.track();
 
-            case TURN:
-                boolean allThere = true;
-                for (int i = 0; i < 4; i++) {
-                    if (!usable(i)) {
-                        rig.setSteerPowerDirect(i, 0.0);
-                        continue;
-                    }
-                    // By the steering encoder, seeded from the readings.
-                    double togo = -rig.getHomeErrorDegrees(i);
-                    double moved = Math.abs(togo - lastTogo[i]);
-                    lastTogo[i] = togo;
-                    if (Math.abs(togo) <= TURN_DONE_DEG) {
-                        rig.setSteerPowerDirect(i, 0.0);
-                        kick[i] = KICK_START;
-                        continue;
-                    }
-                    allThere = false;
-                    if (moved < STUCK_DEG) {
-                        kick[i] = Math.min(MAX_POWER, kick[i] + KICK_RAMP_PER_S * dt);
-                    } else {
-                        kick[i] = Math.max(KICK_START, kick[i] - KICK_RAMP_PER_S * dt);
-                    }
-                    double p = PIDController.clamp(POWER_PER_DEG * Math.abs(togo), kick[i], MAX_POWER);
-                    rig.setSteerPowerDirect(i, Math.copySign(p, togo));
-                }
-                holdTime = allThere ? holdTime + dt : 0.0;
-                if (holdTime >= TURN_HOLD_S || stateTime > TURN_TIMEOUT_S || totalTime > TIME_LIMIT_S) {
-                    turnEnded();
-                }
-                break;
+        // Burst sampling holds up the loop, so only while no wheel is turning.
+        boolean anyReading = false;
+        for (Step s : step) {
+            anyReading |= s == Step.READ;
+        }
+        countSamples(anyReading && !isTurning() ? rig.sampleEncodersFor(SAMPLE_BURST_MS) : 1, dt);
 
-            case SETTLE:
-                allPowerOff();
-                if (stateTime > SETTLE_S) {
-                    rig.restartSeedAverage();
-                    enter(State.MEASURE);
-                }
-                break;
+        boolean allHome = true;
+        for (int i = 0; i < 4; i++) {
+            stepTime[i] += dt;
+            switch (step[i]) {
+                case READ:
+                    rig.setSteerPowerDirect(i, 0.0);
+                    if (readingReady(i)) {
+                        useReading(i);
+                    }
+                    break;
+                case TURN:
+                    approach.update(i, dt);
+                    if (!approach.isTurning(i)) {
+                        enter(i, Step.SETTLE);
+                    }
+                    break;
+                case SETTLE:
+                    rig.setSteerPowerDirect(i, 0.0);
+                    if (stepTime[i] > SETTLE_S) {
+                        rig.restartSeedAverage(i);
+                        enter(i, Step.READ);
+                    }
+                    break;
+                case HOME:
+                case NO_SIGNAL:
+                    rig.setSteerPowerDirect(i, 0.0);
+                    break;
+            }
+            allHome &= step[i] == Step.HOME || step[i] == Step.NO_SIGNAL;
+        }
 
-            case DONE:
-                allPowerOff();
-                break;
+        if (allHome) {
+            finish("every wheel done");
+        } else if (totalTime >= TIME_LIMIT_S) {
+            finish("time limit reached");
         }
     }
 
@@ -200,205 +192,143 @@ public class AbsoluteHome {
         }
     }
 
-    /** True for a wheel whose Through Bore can be used. */
-    private boolean usable(int i) {
-        return rig.getSeedSampleCount(i) < MIN_SAMPLES || rig.isThroughBorePulsing(i);
-    }
-
-    private boolean isRoughReading() {
-        return readings == 0;
-    }
-
-    /** Every usable wheel's reading is accurate enough for this step, or time is up. */
-    private boolean readingsReady() {
-        boolean allPrecise = true;
-        boolean allKnown = true;
-        boolean farOff = false;
-        for (int i = 0; i < 4; i++) {
-            int n = rig.getSeedSampleCount(i);
-            if (n < MIN_SAMPLES) {
-                return false;
-            }
-            if (!usable(i) || n >= SwerveRig.SEED_SAMPLES) {
-                continue;
-            }
-            double err = rig.getSeedStdErrorDegrees(i);
-            double angle = rig.getSeedWheelDegrees(i);
-            if (isRoughReading()) {
-                if (err > Math.max(ROUGH_MIN_ERROR_DEG, ROUGH_FRACTION * Math.abs(angle))) {
-                    return false;
-                }
-                continue;
-            }
-            if (err > PRECISE_ERROR_DEG) {
-                allPrecise = false;
-            }
-            if (err > RECHECK_KNOWN_DEG) {
-                allKnown = false;
-            } else if (Math.abs(angle) - err > RECHECK_ABOVE_DEG) {
-                farOff = true;
-            }
+    /** Is this wheel's reading good enough for how far it is from 0? */
+    private boolean readingReady(int i) {
+        int n = rig.getSeedSampleCount(i);
+        if (n < MIN_SAMPLES) {
+            return false;
         }
-        return allPrecise
-                || totalTime >= MEASURE_DEADLINE_S
-                || (allKnown && farOff);
+        if (!rig.isThroughBorePulsing(i) || n >= SwerveRig.SEED_SAMPLES || stepTime[i] >= READING_MAX_S) {
+            return true;
+        }
+        double needed = Math.max(PRECISE_ERROR_DEG, ROUGH_FRACTION * Math.abs(rig.getSeedWheelDegrees(i)));
+        return rig.getSeedStdErrorDegrees(i) <= needed;
     }
 
-    private void useReadings() {
-        boolean rough = isRoughReading();
-        readings++;
-        boolean recheck = false;
-        boolean allThere = true;
-        for (int i = 0; i < 4; i++) {
-            if (!usable(i)) {
-                continue;
-            }
-            double angle = rig.getSeedWheelDegrees(i);
-            double err = rig.getSeedStdErrorDegrees(i);
+    /** Is the wheel home by its last reading, allowing for that reading's ±? */
+    private boolean readsHome(int i) {
+        return Math.abs(readingDeg[i]) <= DONE_DEG + Math.min(readingErrorDeg[i], NOISE_ALLOWANCE_MAX_DEG);
+    }
 
-            // After a turn of more than a few degrees the wheel should have
-            // moved toward 0. Moving away means the steering direction settings
-            // disagree with the Through Bore.
-            if (measured[i] && Math.abs(lastReadingDeg[i]) > 20.0) {
-                double moved = wrap(angle - lastReadingDeg[i]);
-                wrongWay[i] = Math.abs(moved) > 10.0 && Math.signum(moved) == Math.signum(lastReadingDeg[i]);
-            }
-            lastReadingDeg[i] = angle;
+    /** Turns this wheel has had: one per reading after the first. */
+    private int turnsDone(int i) {
+        return Math.max(0, readings[i] - 1);
+    }
 
-            // Combine with what's already known, each weighted by how exact it
-            // is. The steering encoder then starts from the combined angle.
-            double estimate;
-            if (!measured[i] || wrongWay[i] || Double.isInfinite(knownDeg[i])) {
-                estimate = angle;
-                knownDeg[i] = err;
-            } else {
-                double before = rig.getHomeErrorDegrees(i);
-                double wBefore = 1.0 / (knownDeg[i] * knownDeg[i]);
-                double wNow = 1.0 / (err * err);
-                estimate = before + wrap(angle - before) * wNow / (wBefore + wNow);
-                knownDeg[i] = 1.0 / Math.sqrt(wBefore + wNow);
-            }
-            measured[i] = true;
-            if (!rough) {
-                // The rough reading seeds all four at once below.
-                rig.nudgeWheel(i, wrap(estimate - rig.getHomeErrorDegrees(i)));
-            }
-            errorDeg[i] = -estimate;
-            if (Math.abs(estimate) > RECHECK_ABOVE_DEG) {
-                recheck = true;
-            }
-            if (Math.abs(estimate) > TURN_DONE_DEG) {
-                allThere = false;
-            }
+    private void useReading(int i) {
+        if (!rig.isThroughBorePulsing(i)) {
+            enter(i, Step.NO_SIGNAL);
+            return;
         }
+        double angle = rig.getSeedWheelDegrees(i);
 
-        if (rough) {
-            // Steering encoders start from this reading, for the turns and for
-            // driving after PLAY.
-            rig.seedFromThroughBores();
-            startTurn(false);
-        } else if (recheck) {
-            if (readings >= MAX_READINGS || totalTime >= MEASURE_DEADLINE_S) {
-                finish("STOPPED: a wheel is still more than " + RECHECK_ABOVE_DEG + "° off");
-            } else {
-                startTurn(false);
-            }
-        } else if (allThere) {
-            finish("all wheels forward");
+        // After a turn the wheel should be near 0, or just past it. Further
+        // off on the same side suggests the steering encoder and the Through
+        // Bore disagree on which way is +. Shown on telemetry; the wheel is
+        // still corrected.
+        if (readings[i] > 0 && Math.signum(angle) == Math.signum(readingDeg[i])
+                && Math.abs(angle) > Math.abs(readingDeg[i]) + WRONG_WAY_MARGIN_DEG) {
+            wrongWay[i] = true;
+        }
+        readings[i]++;
+        readingDeg[i] = angle;
+        readingErrorDeg[i] = rig.getSeedStdErrorDegrees(i);
+
+        // The steering encoder starts from this reading, for the turn and for
+        // driving after PLAY.
+        rig.seedFromThroughBore(i);
+        approach.resetPosition(i);
+
+        if (readsHome(i)) {
+            enter(i, Step.HOME);
+        } else if (TIME_LIMIT_S - totalTime < LAST_TURN_S) {
+            outOfTime[i] = true;
+            enter(i, Step.HOME);
         } else {
-            startTurn(true);
+            approach.start(i, 0.0);
+            enter(i, Step.TURN);
         }
-    }
-
-    /** The turn has ended: measure again, or stop if there's no time for that. */
-    private void turnEnded() {
-        allPowerOff();
-        for (int i = 0; i < 4; i++) {
-            knownDeg[i] = Math.sqrt(knownDeg[i] * knownDeg[i] + TURN_ERROR_DEG * TURN_ERROR_DEG);
-        }
-        boolean timeForCheck = totalTime + SETTLE_S + CHECK_MIN_S <= MEASURE_DEADLINE_S;
-        if (totalTime > TIME_LIMIT_S) {
-            finish("time limit reached while turning");
-        } else if (correction && (!timeForCheck || readings >= MAX_READINGS)) {
-            finish("all wheels forward");
-        } else {
-            enter(State.SETTLE);
-        }
-    }
-
-    private void startTurn(boolean smallCorrection) {
-        correction = smallCorrection;
-        holdTime = 0.0;
-        for (int i = 0; i < 4; i++) {
-            kick[i] = KICK_START;
-            lastTogo[i] = -rig.getHomeErrorDegrees(i);
-        }
-        enter(State.TURN);
     }
 
     private void finish(String text) {
+        allPowerOff();
+        StringBuilder notHome = new StringBuilder();
         StringBuilder noSignal = new StringBuilder();
-        double worst = 0.0;
         for (int i = 0; i < 4; i++) {
-            if (!usable(i)) {
+            if (step[i] == Step.NO_SIGNAL) {
                 noSignal.append(' ').append(SwerveRig.LABELS[i]);
-            } else {
-                worst = Math.max(worst, knownDeg[i]);
+                continue;
+            }
+            // A wheel never read at all: seed from what its average has.
+            if (readings[i] == 0) {
+                rig.seedFromThroughBore(i);
+            }
+            if (step[i] != Step.HOME || !readsHome(i)) {
+                notHome.append(' ').append(SwerveRig.LABELS[i]);
             }
         }
-        text = String.format("%s (%d readings, %.1f s, each wheel to about ±%.1f°)",
-                text, readings, totalTime, worst);
-        result = noSignal.length() == 0 ? text : text + ", but NO SIGNAL from:" + noSignal;
-        allPowerOff();
-        enter(State.DONE);
+        rig.finishSeeding();
+
+        text = String.format("%s in %.1f s", text, totalTime);
+        if (notHome.length() > 0) {
+            text += ", NOT HOME:" + notHome;
+        }
+        if (noSignal.length() > 0) {
+            text += ", NO SIGNAL from:" + noSignal;
+        }
+        result = text;
+        finished = true;
     }
 
     private void allPowerOff() {
         for (int i = 0; i < 4; i++) {
-            rig.setSteerPowerDirect(i, 0.0);
+            approach.cancel(i);
         }
     }
 
-    private void enter(State next) {
-        state = next;
-        stateTime = 0.0;
-    }
-
-    private static double wrap(double deg) {
-        return Math.toDegrees(SwerveHardware.normalize(Math.toRadians(deg)));
+    private void enter(int i, Step next) {
+        step[i] = next;
+        stepTime[i] = 0.0;
     }
 
     public void addTelemetry(Telemetry telemetry) {
-        switch (state) {
-            case MEASURE:
-                telemetry.addLine("FORWARD reading " + (readings + 1)
-                        + (isRoughReading() ? " (rough)" : " (precise)") + ": measuring Through Bores, keep still");
-                break;
-            case TURN:
-                telemetry.addLine(correction ? "FORWARD: small correction" : "FORWARD: turning to forward");
-                break;
-            case SETTLE:
-                telemetry.addLine("FORWARD: letting the wheels stop");
-                break;
-            case DONE:
-                telemetry.addLine("FORWARD DONE: " + result);
-                break;
-        }
-        if (state != State.DONE) {
-            telemetry.addLine(String.format("time so far: %.1f s (limit %.0f)   Through Bore samples/s: %.0f",
-                    totalTime, TIME_LIMIT_S, samplesPerSecond));
+        if (finished) {
+            telemetry.addLine("FORWARD DONE: " + result);
+        } else {
+            telemetry.addLine(String.format("FORWARD: homing each wheel to within %.0f°   %.1f s (limit %.0f)   Through Bore samples/s: %.0f",
+                    DONE_DEG, totalTime, TIME_LIMIT_S, samplesPerSecond));
         }
         telemetry.addLine("wheel | Through Bore | ± | samples | steer enc | status");
         for (int i = 0; i < 4; i++) {
             String status;
-            if (!usable(i)) {
-                status = "NO SIGNAL from " + SwerveRig.ENCODER_NAMES[i];
-            } else if (wrongWay[i]) {
-                status = "TURNED THE WRONG WAY: flip STEER_INVERTED[" + i + "] (all four: flip ENCODER_DIRECTION)";
-            } else if (measured[i]) {
-                status = String.format("was %.1f° off (±%.1f) at the last reading", -errorDeg[i], knownDeg[i]);
-            } else {
-                status = "";
+            switch (step[i]) {
+                case READ:
+                    status = String.format("reading %d (%.1f s), keep still", readings[i] + 1, stepTime[i]);
+                    break;
+                case TURN:
+                    status = String.format("%s (%s)",
+                            approach.isOnFinalLeg(i) ? "turning to 0" : "backing off past 0 (backlash)",
+                            turnsDone(i) == 0 ? "first turn" : "adjustment " + turnsDone(i));
+                    break;
+                case SETTLE:
+                    status = "letting it stop";
+                    break;
+                case HOME:
+                    if (readsHome(i)) {
+                        status = String.format("HOME: %.1f° (±%.1f) after %d readings", readingDeg[i], readingErrorDeg[i], readings[i]);
+                    } else {
+                        status = String.format("NOT HOME: out of time, %.1f° off (±%.1f)", readingDeg[i], readingErrorDeg[i]);
+                    }
+                    break;
+                default:
+                    status = "NO SIGNAL from " + SwerveRig.ENCODER_NAMES[i];
+                    break;
+            }
+            if (finished && step[i] != Step.HOME && step[i] != Step.NO_SIGNAL) {
+                status = String.format("NOT HOME: stopped, last read %.1f° off", readingDeg[i]);
+            }
+            if (wrongWay[i]) {
+                status += "  (went the wrong way once: Through Bore and steering encoder may disagree on direction)";
             }
             telemetry.addData(SwerveRig.LABELS[i], "%6.1f° | ±%4.1f | %d | %6.1f° | %s",
                     rig.getSeedWheelDegrees(i), rig.getSeedStdErrorDegrees(i),

@@ -142,6 +142,19 @@ public class SwerveDrive {
                 fieldCentric);
     }
 
+    /**
+     * As driveNormalized(), but the rotation is given directly in rad/s
+     * (counter-clockwise positive) instead of from a stick, e.g. by a heading
+     * hold. Robot-centric.
+     */
+    public void driveNormalizedWithOmega(double forward, double strafe, double omegaRadPerSec) {
+        forward = applyDeadband(forward);
+        strafe = applyDeadband(strafe);
+        forward = Math.copySign(forward * forward, forward);
+        strafe = Math.copySign(strafe * strafe, strafe);
+        drive(forward * maxSpeedMetersPerSec, strafe * maxSpeedMetersPerSec, omegaRadPerSec, false);
+    }
+
     /** Real-units drive with internally measured dt. */
     public void drive(double vx, double vy, double omega, boolean fieldCentric) {
         drive(vx, vy, omega, fieldCentric, measureDt());

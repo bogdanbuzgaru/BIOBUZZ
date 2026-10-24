@@ -13,17 +13,20 @@ import org.firstinspires.ftc.teamcode.swerve.WheelAngleStore;
  * ALL MOTORS ARE OFF in this OpMode and set to coast, so every wheel can be
  * turned by hand. Works in INIT and after PLAY alike.
  *
+ * At the start it reads where the wheels are from the Through Bores and the
+ * saved offsets (keep them still for that), then follows them by hand.
+ *
  *   1. Turn all four wheels so they point straight forward. Use a straight
  *      edge along the wheels if you can; every degree off here is a degree off
  *      every time the robot homes.
  *   2. Let go of the wheels and press TRIANGLE (Y).
  *   3. Straight away, every wheel's angle is saved as 0° (WheelAngleStore).
- *      This is what OpSwerve homes back to at every INIT. From here on the
- *      steering motor encoders follow the wheels, also when you turn them by
- *      hand in this OpMode, and keep the saved angles up to date.
- *   4. Keep everything still while each Through Bore is also averaged over its
- *      full sample count (the progress shows on telemetry); its offsets are
- *      then set so that position reads 0° too, and saved.
+ *      From here on the steering motor encoders follow the wheels, also when
+ *      you turn them by hand in this OpMode, and keep the saved angles up to
+ *      date.
+ *   4. Keep everything still while each Through Bore is averaged (progress on
+ *      telemetry); its offsets are then set so that position reads 0°, and
+ *      saved. This is what OpSwerve homes back to at every INIT.
  *
  * CROSS (A) cancels a capture in progress. Press TRIANGLE again any time to
  * redo it.
@@ -35,6 +38,9 @@ public class OpSwerveCalibration extends LinearOpMode {
     private final WheelAngleStore store = new WheelAngleStore();
     private String wheelSource = "";
     private boolean capturing = false;
+    /** Reading where the wheels are at the start, before following them. */
+    private boolean readingStart = false;
+    private double[] saved;
     private boolean prevTriangle = false;
     private String message = "Turn all wheels straight forward by hand, then press TRIANGLE.";
     private final ElapsedTime telemetryTimer = new ElapsedTime();
@@ -47,12 +53,17 @@ public class OpSwerveCalibration extends LinearOpMode {
         rig = new SwerveRig(hardwareMap);
         rig.floatAllMotors();
 
-        // If the wheel angles were saved before, start from them so turning the
-        // wheels by hand here keeps the saved angles right.
-        double[] saved = store.load();
-        if (saved != null) {
+        // Where the wheels are now: read from the Through Bores with the saved
+        // offsets. The saved wheel angles go stale as soon as the wheels turn
+        // in another OpMode, so they're only a fallback.
+        saved = store.load();
+        if (rig.offsetsCameFromFile()) {
+            rig.restartSeedAverage();
+            readingStart = true;
+            wheelSource = "reading the Through Bores, keep the wheels still";
+        } else if (saved != null) {
             rig.seedFromAngles(saved);
-            wheelSource = "following the wheels from the saved angles";
+            wheelSource = "following the wheels from the saved angles (no saved offsets to read them with)";
         } else {
             wheelSource = "no saved wheel angles yet: press TRIANGLE with the wheels straight";
         }
@@ -73,8 +84,50 @@ public class OpSwerveCalibration extends LinearOpMode {
         }
     }
 
+    /** Samples per Through Bore in a FORWARD capture. */
+    private static final int CAPTURE_SAMPLES = 8000;
+
     /** While capturing, sample the Through Bores this long per loop, ms. */
     private static final double CAPTURE_BURST_MS = 25.0;
+
+    /** The start reading is good enough once every wheel is known to this (one standard error), degrees. */
+    private static final double START_ERROR_DEG = 1.0;
+    /** Fewest samples in the start reading. */
+    private static final int START_MIN_SAMPLES = 300;
+
+    /**
+     * Once the start reading is good enough, the steering encoders take it
+     * over and follow the wheels from there. A wheel whose Through Bore sends
+     * nothing keeps its saved angle.
+     */
+    private void finishStartReadingIfReady() {
+        for (int i = 0; i < 4; i++) {
+            int n = rig.getSeedSampleCount(i);
+            if (n < START_MIN_SAMPLES) {
+                return;
+            }
+            if (rig.isThroughBorePulsing(i) && n < SwerveRig.SEED_SAMPLES
+                    && rig.getSeedStdErrorDegrees(i) > START_ERROR_DEG) {
+                return;
+            }
+        }
+        double[] start = new double[4];
+        StringBuilder noSignal = new StringBuilder();
+        for (int i = 0; i < 4; i++) {
+            if (rig.isThroughBorePulsing(i)) {
+                start[i] = rig.getSeedWheelDegrees(i);
+            } else {
+                start[i] = saved != null ? saved[i] : 0.0;
+                noSignal.append(' ').append(SwerveRig.LABELS[i]);
+            }
+        }
+        rig.seedFromAngles(start);
+        readingStart = false;
+        wheelSource = "read from the Through Bores, now following the wheels";
+        if (noSignal.length() > 0) {
+            wheelSource += ". NO SIGNAL from" + noSignal + " (saved angle used)";
+        }
+    }
 
     /** Encoder readings this close to 0°/360° can't be averaged reliably. */
     private static final double WRAP_MARGIN_DEG = 10.0;
@@ -87,7 +140,7 @@ public class OpSwerveCalibration extends LinearOpMode {
     private String nearWrapWarning() {
         StringBuilder bad = new StringBuilder();
         for (int i = 0; i < 4; i++) {
-            double enc = rig.getOffsetDegrees(i) / -SwerveRig.ENCODER_DIRECTION;   // the captured encoder angle
+            double enc = rig.getOffsetDegrees(i) / -SwerveRig.ENCODER_DIRECTION[i];   // the captured encoder angle
             double fromWrap = Math.min(Math.abs(enc), 360.0 - Math.abs(enc));
             if (fromWrap < WRAP_MARGIN_DEG) {
                 bad.append(' ').append(SwerveRig.LABELS[i]);
@@ -101,12 +154,15 @@ public class OpSwerveCalibration extends LinearOpMode {
 
     /** One pass of the loop; the same in INIT and after PLAY. */
     private void step() {
-        if (capturing) {
-            // Sample in bursts so the long capture average fills quickly.
+        if (capturing || readingStart) {
+            // Sample in bursts so the average fills quickly.
             samplesSinceRate += rig.sampleEncodersFor(CAPTURE_BURST_MS);
         } else {
             rig.sampleEncoders();
             samplesSinceRate++;
+        }
+        if (readingStart) {
+            finishStartReadingIfReady();
         }
 
         // TRIANGLE: the wheels are straight right now. Save that as 0° at once,
@@ -115,9 +171,10 @@ public class OpSwerveCalibration extends LinearOpMode {
             double[] zero = {0.0, 0.0, 0.0, 0.0};
             rig.seedFromAngles(zero);
             wheelSource = store.saveNow(zero)
-                    ? "wheels set to 0° and SAVED - OpSwerve homes to this position"
+                    ? "wheels set to 0° and SAVED"
                     : "wheels set to 0° but " + store.getStatus();
             rig.restartSeedAverage();
+            readingStart = false;
             capturing = true;
             message = "CAPTURING - don't touch the wheels.";
         }
@@ -133,10 +190,10 @@ public class OpSwerveCalibration extends LinearOpMode {
             message = "Capture cancelled. Press TRIANGLE to start again.";
         }
 
-        if (capturing && rig.seedAveragesFull()) {
+        if (capturing && rig.seedAveragesHold(CAPTURE_SAMPLES)) {
             capturing = false;
             message = rig.captureForwardOffsets()
-                    ? "Through Bore offsets captured and saved too."
+                    ? "Through Bore offsets captured and saved - OpSwerve homes to this position."
                     : "Through Bore offsets captured but " + rig.getSaveStatus()
                       + ". Type them into DEFAULT_OFFSET_DEG in SwerveRig.java.";
             message += nearWrapWarning();
@@ -165,7 +222,7 @@ public class OpSwerveCalibration extends LinearOpMode {
             telemetry.addLine(String.format("progress  FL %d  FR %d  BL %d  BR %d  / %d samples",
                     rig.getSeedSampleCount(0), rig.getSeedSampleCount(1),
                     rig.getSeedSampleCount(2), rig.getSeedSampleCount(3),
-                    SwerveRig.SEED_SAMPLES));
+                    CAPTURE_SAMPLES));
         }
         telemetry.addData("offsets", rig.offsetsAsCode());
         telemetry.addData("offsets source", rig.getLoadStatus());
