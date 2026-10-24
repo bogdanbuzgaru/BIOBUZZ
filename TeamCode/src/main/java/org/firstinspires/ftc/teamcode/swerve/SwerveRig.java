@@ -41,8 +41,12 @@ public class SwerveRig {
 
     // ---------------- values to set on the robot ----------------
 
-    /** Offsets used until OpSwerveCalibration has saved some, degrees. */
-    public static final double[] DEFAULT_OFFSET_DEG = {0.0, 0.0, 0.0, 0.0};
+    /**
+     * Offsets used when the robot has no saved SwerveOffsets.txt, degrees.
+     * Backup of the capture saved on the Control Hub on 2026-10-24 16:32
+     * (read back over adb); a new OpSwerveCalibration capture overrides it.
+     */
+    public static final double[] DEFAULT_OFFSET_DEG = {97.48314606741572, 60.49438202247191, -144.40449438202248, -2.202247191011209};
 
     /**
      * Per wheel, -1: when its Through Bore turns +15 degrees, the wheel turns
